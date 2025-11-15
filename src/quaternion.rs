@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::vectors::{Normalize, Normal, Vec3};
 use std::ops::Deref;
 #[derive(Debug, Copy, Clone)]

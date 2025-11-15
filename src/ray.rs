@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::vectors::Vec3;
 
 #[derive(Debug)]

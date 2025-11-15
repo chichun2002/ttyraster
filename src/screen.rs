@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::vectors::Vec2;
 
 #[derive(Debug, Clone, Copy)]
@@ -12,7 +14,7 @@ impl Pixel {
         Pixel { r, g, b }
     }
     pub fn black() -> Self {
-        Pixel { r: 0, g: 0, b: 0 }
+        Pixel { r: 1, g: 1, b: 1 } // Use near-black to avoid terminal transparency
     }
 
     pub fn white() -> Self {
@@ -101,25 +103,42 @@ impl Screen {
         use std::fmt::Write as FmtWrite;
 
         // Build entire frame in a string buffer with ANSI escape codes for positioning
-        let mut buffer = String::with_capacity((self.pixel_width * self.pixel_height + self.pixel_height * 10) as usize);
+        let mut buffer = String::with_capacity(
+            (self.pixel_width * self.pixel_height + self.pixel_height * 10) as usize,
+        );
 
-        for y in 0..self.pixel_height {
-            // Add cursor positioning for each line
-            write!(&mut buffer, "\x1b[{};{}H", y + 1, 1).unwrap();
+        for y in (0..self.pixel_height).step_by(2) {
+            // Add cursor positioning for each line (y/2 because we process 2 rows per terminal line)
+            write!(&mut buffer, "\x1b[{};{}H", y / 2 + 1, 1).unwrap();
 
             for x in 0..self.pixel_width {
-                let index = (y * self.pixel_width + x) as usize;
-                let pixel = self.pixels[index];
-
-                let char = if pixel.r > 200 && pixel.g > 200 && pixel.b > 200 {
-                    '█' // White pixel
-                } else if pixel.r > 100 || pixel.g > 100 || pixel.b > 100 {
-                    '░' // Gray pixel
+                let pixel_top = self.pixels[(y * self.pixel_width + x) as usize];
+                let pixel_bottom = if y + 1 < self.pixel_height {
+                    self.pixels[((y + 1) * self.pixel_width + x) as usize]
                 } else {
-                    ' ' // Black pixel
+                    pixel_top
                 };
-                buffer.push(char);
+
+                buffer.push_str(&format!(
+                    "\x1b[48;2;{};{};{}m\x1b[38;2;{};{};{}m▄",
+                    pixel_top.r,
+                    pixel_top.g,
+                    pixel_top.b,
+                    pixel_bottom.r,
+                    pixel_bottom.g,
+                    pixel_bottom.b
+                ));
+
+                // let char = if pixel.r > 200 && pixel.g > 200 && pixel.b > 200 {
+                //     '█' // White pixel
+                // } else if pixel.r > 100 || pixel.g > 100 || pixel.b > 100 {
+                //     '░' // Gray pixel
+                // } else {
+                //     ' ' // Black pixel
+                // };
+                // buffer.push(char);
             }
+            buffer.push_str("\x1b[0m")
         }
 
         // Write entire frame at once

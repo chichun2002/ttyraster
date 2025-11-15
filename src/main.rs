@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 mod camera;
 mod object;
 mod quaternion;
@@ -51,8 +53,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Get terminal size and create screen
         let (term_width, term_height) = size()?;
-        let screen_height = (term_height - 8).min(50) as u32; // Leave room for controls
-        let screen_width = term_width.min(1000) as u32;
+        // Double height since we use half-blocks (2 pixels per terminal line)
+        let screen_height = ((term_height - 3) * 2) as u32; // Leave room for controls
+        let screen_width = term_width as u32;
 
         let mut screen = Screen::new(screen_width, screen_height);
 
@@ -83,7 +86,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let render_time = render_start.elapsed();
 
         // Show controls and performance stats at bottom
-        execute!(stdout(), cursor::MoveTo(0, screen_height as u16 + 1))?;
+        execute!(stdout(), cursor::MoveTo(0, screen_height as u16 / 2 + 1))?;
         print!(
             "Controls: W/A/S/D=Move | Q/E=Rotate | M/N=Focal | ESC=Exit | Draw: {:.2}ms | Render: {:.2}ms | Camera: pos={:?}, focal={:.2}",
             draw_time.as_millis(),

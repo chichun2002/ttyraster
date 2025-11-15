@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::quaternion::{rotation_between_vectors, Quaternion};
 use crate::screen::Screen;
 use crate::vectors::{Normal, Vec2, Vec3};
