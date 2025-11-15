@@ -1,4 +1,5 @@
 mod camera;
+mod object;
 mod quaternion;
 mod ray;
 mod screen;
@@ -8,26 +9,29 @@ mod vectors;
 use crate::camera::Camera;
 use crate::quaternion::from_axis_angle;
 use crate::screen::Screen;
-use crate::triangle::Triangle;
 use crate::vectors::{Normal, Vec3};
 use crossterm::{
     cursor,
     event::{self, Event, KeyCode},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, size, Clear, ClearType},
+    terminal::{disable_raw_mode, enable_raw_mode, size},
 };
 use std::io::{stdout, Write};
+use std::path::Path;
 use std::time::Instant;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let triangle = Triangle::new(
-        Vec3::new(5.0, 0.2, 0.0),
-        Vec3::new(1.0, 0.8, 0.0),
-        Vec3::new(3.0, 5.2, 0.0),
-    );
+    // let triangle = Triangle::new(
+    //     Vec3::new(5.0, 0.2, 0.0),
+    //     Vec3::new(1.0, 0.8, 0.0),
+    //     Vec3::new(3.0, 5.2, 0.0),
+    // );
+    let mut object = object::load_model(Path::new(
+        "/home/tristan/Documents/software_rasterizer/models/bunny.obj",
+    ))?;
 
     let mut camera = Camera::new(
-        Vec3::new(0.0, 0.0, 5.0),
+        Vec3::new(0.0, 1.0, 5.0),
         Normal::new(Vec3::new(0.0, 0.0, -1.0)),
         1.0,
         1.0,
@@ -35,30 +39,44 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     enable_raw_mode()?;
+    execute!(stdout(), cursor::Hide)?;
 
     let move_speed = 0.5;
     let rotate_speed = 0.1;
     let focal_speed = 0.05;
 
     loop {
-        // Clear screen and move cursor to top-left
-        execute!(stdout(), cursor::MoveTo(0, 0), Clear(ClearType::All))?;
+        // Move cursor to top-left
+        execute!(stdout(), cursor::MoveTo(0, 0))?;
 
         // Get terminal size and create screen
         let (term_width, term_height) = size()?;
-        let screen_height = (term_height - 8).min(50) as u32;  // Leave room for controls
-        let screen_width = term_width.min(100) as u32;
+        let screen_height = (term_height - 8).min(50) as u32; // Leave room for controls
+        let screen_width = term_width.min(1000) as u32;
 
         let mut screen = Screen::new(screen_width, screen_height);
 
-        // Project vertices and draw triangle
-        let proj_start = Instant::now();
-        let p1 = camera.project(triangle.p1, &screen);
-        let p2 = camera.project(triangle.p2, &screen);
-        let p3 = camera.project(triangle.p3, &screen);
-        let proj_time = proj_start.elapsed();
+        let rotation = from_axis_angle(Vec3::new(0.0, 1.0, 0.0), 0.02);
+        object.rotation = rotation * object.rotation;
 
-        screen.draw_triangle(p1, p2, p3);
+        // Project vertices and draw triangle
+        let draw_start = Instant::now();
+        // let p1 = camera.project(triangle.p1, &screen);
+        // let p2 = camera.project(triangle.p2, &screen);
+        // let p3 = camera.project(triangle.p3, &screen);
+        for f in object.faces.iter() {
+            let v0 = object.rotation.transform(object.vertices[f[0]]);
+            let v1 = object.rotation.transform(object.vertices[f[1]]);
+            let v2 = object.rotation.transform(object.vertices[f[2]]);
+
+            let p1 = camera.project(v0, &screen);
+            let p2 = camera.project(v1, &screen);
+            let p3 = camera.project(v2, &screen);
+            screen.draw_triangle(p1, p2, p3);
+        }
+        let draw_time = draw_start.elapsed();
+
+        // screen.draw_triangle(p1, p2, p3);
 
         let render_start = Instant::now();
         screen.render()?;
@@ -66,50 +84,58 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Show controls and performance stats at bottom
         execute!(stdout(), cursor::MoveTo(0, screen_height as u16 + 1))?;
-        print!("Controls: W/A/S/D=Move | Q/E=Rotate | M/N=Focal | ESC=Exit | Proj: {:.2}µs | Render: {:.2}ms | Camera: pos={:?}, focal={:.2}",
-            proj_time.as_micros(), render_time.as_secs_f64() * 1000.0, camera.position, camera.focal_length);
+        print!(
+            "Controls: W/A/S/D=Move | Q/E=Rotate | M/N=Focal | ESC=Exit | Draw: {:.2}ms | Render: {:.2}ms | Camera: pos={:?}, focal={:.2}",
+            draw_time.as_millis(),
+            render_time.as_millis(),
+            camera.position,
+            camera.focal_length
+        );
         stdout().flush()?;
 
-        // Wait for input
-        if let Event::Key(key_event) = event::read()? {
-            let forward = *camera.forward();
-            let right = *camera.right();
+        // Poll for input (non-blocking) - use 0ms for max speed, or set to 16ms for ~60 FPS cap
+        if event::poll(std::time::Duration::from_millis(0))? {
+            if let Event::Key(key_event) = event::read()? {
+                let forward = *camera.forward();
+                let right = *camera.right();
 
-            match key_event.code {
-                KeyCode::Char('w') => {
-                    camera.position = camera.position + forward * move_speed;
+                match key_event.code {
+                    KeyCode::Char('w') => {
+                        camera.position = camera.position + forward * move_speed;
+                    }
+                    KeyCode::Char('s') => {
+                        camera.position = camera.position - forward * move_speed;
+                    }
+                    KeyCode::Char('a') => {
+                        camera.position = camera.position - right * move_speed;
+                    }
+                    KeyCode::Char('d') => {
+                        camera.position = camera.position + right * move_speed;
+                    }
+                    KeyCode::Char('q') => {
+                        // Rotate left around Y axis
+                        let rotation = from_axis_angle(Vec3::new(0.0, 1.0, 0.0), rotate_speed);
+                        camera.rotation = rotation * camera.rotation;
+                    }
+                    KeyCode::Char('e') => {
+                        // Rotate right around Y axis
+                        let rotation = from_axis_angle(Vec3::new(0.0, 1.0, 0.0), -rotate_speed);
+                        camera.rotation = rotation * camera.rotation;
+                    }
+                    KeyCode::Char('m') => {
+                        camera.focal_length += focal_speed;
+                    }
+                    KeyCode::Char('n') => {
+                        camera.focal_length = (camera.focal_length - focal_speed).max(0.01);
+                    }
+                    KeyCode::Esc => break,
+                    _ => {}
                 }
-                KeyCode::Char('s') => {
-                    camera.position = camera.position - forward * move_speed;
-                }
-                KeyCode::Char('a') => {
-                    camera.position = camera.position - right * move_speed;
-                }
-                KeyCode::Char('d') => {
-                    camera.position = camera.position + right * move_speed;
-                }
-                KeyCode::Char('q') => {
-                    // Rotate left around Y axis
-                    let rotation = from_axis_angle(Vec3::new(0.0, 1.0, 0.0), rotate_speed);
-                    camera.rotation = rotation * camera.rotation;
-                }
-                KeyCode::Char('e') => {
-                    // Rotate right around Y axis
-                    let rotation = from_axis_angle(Vec3::new(0.0, 1.0, 0.0), -rotate_speed);
-                    camera.rotation = rotation * camera.rotation;
-                }
-                KeyCode::Char('m') => {
-                    camera.focal_length += focal_speed;
-                }
-                KeyCode::Char('n') => {
-                    camera.focal_length = (camera.focal_length - focal_speed).max(0.01);
-                }
-                KeyCode::Esc => break,
-                _ => {}
             }
         }
     }
 
+    execute!(stdout(), cursor::Show)?;
     disable_raw_mode()?;
     Ok(())
 }

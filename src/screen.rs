@@ -45,22 +45,42 @@ impl Screen {
         }
     }
 
-    pub fn triangle_bounds(&mut self, v0: Vec2, v1: Vec2, v2: Vec2) {
+    pub fn triangle_bounds(&mut self, v0: Vec2, v1: Vec2, v2: Vec2) -> (Vec2, Vec2) {
         let x_max = v0.x.max(v1.x).max(v2.x);
         let y_max = v0.y.max(v1.y).max(v2.y);
         let x_min = v0.x.min(v1.x).min(v2.x);
         let y_min = v0.y.min(v1.y).min(v2.y);
 
-        self.draw_pixel(Vec2::new(x_min, y_min), Pixel::new(150, 150, 150));
-        self.draw_pixel(Vec2::new(x_max, y_max), Pixel::new(150, 150, 150));
+        // Debug: Draw triangle bounds
+        // self.draw_pixel(Vec2::new(x_min, y_min), Pixel::new(150, 150, 150));
+        // self.draw_pixel(Vec2::new(x_max, y_max), Pixel::new(150, 150, 150));
+
+        (Vec2::new(x_min, y_min), Vec2::new(x_max, y_max))
     }
 
     pub fn draw_triangle(&mut self, v0: Vec2, v1: Vec2, v2: Vec2) {
-        self.draw_pixel(v0, Pixel::white());
-        self.draw_pixel(v1, Pixel::white());
-        self.draw_pixel(v2, Pixel::white());
+        fn edge_function(a: Vec2, b: Vec2, c: Vec2) -> f32 {
+            (c.x - a.x) * (b.y - a.y) - (c.y - a.y) * (b.x - a.x)
+        }
 
-        self.triangle_bounds(v0, v1, v2);
+        let bounds = self.triangle_bounds(v0, v1, v2);
+
+        for y in (bounds.0.y.floor() as usize)..(bounds.1.y.ceil() as usize) {
+            for x in (bounds.0.x.floor() as usize)..(bounds.1.x.ceil() as usize) {
+                let p = Vec2::new(x as f32 + 0.5, y as f32 + 0.5);
+
+                let w0 = edge_function(v0, v1, p);
+                let w1 = edge_function(v1, v2, p);
+                let w2 = edge_function(v2, v0, p);
+
+                let inside =
+                    (w0 >= 0.0 && w1 >= 0.0 && w2 >= 0.0) || (w0 <= 0.0 && w1 <= 0.0 && w2 <= 0.0);
+
+                if inside {
+                    self.draw_pixel(Vec2::new(x as f32, y as f32), Pixel::white());
+                }
+            }
+        }
     }
 
     pub fn draw_pixel(&mut self, pos: Vec2, color: Pixel) {
@@ -77,11 +97,16 @@ impl Screen {
     }
 
     pub fn render(&self) -> std::io::Result<()> {
-        use crossterm::{cursor, execute};
         use std::io::{stdout, Write};
+        use std::fmt::Write as FmtWrite;
+
+        // Build entire frame in a string buffer with ANSI escape codes for positioning
+        let mut buffer = String::with_capacity((self.pixel_width * self.pixel_height + self.pixel_height * 10) as usize);
 
         for y in 0..self.pixel_height {
-            execute!(stdout(), cursor::MoveTo(0, y as u16))?;
+            // Add cursor positioning for each line
+            write!(&mut buffer, "\x1b[{};{}H", y + 1, 1).unwrap();
+
             for x in 0..self.pixel_width {
                 let index = (y * self.pixel_width + x) as usize;
                 let pixel = self.pixels[index];
@@ -93,9 +118,12 @@ impl Screen {
                 } else {
                     ' ' // Black pixel
                 };
-                print!("{}", char);
+                buffer.push(char);
             }
         }
+
+        // Write entire frame at once
+        print!("{}", buffer);
         stdout().flush()?;
         Ok(())
     }
