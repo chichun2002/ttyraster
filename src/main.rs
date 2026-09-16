@@ -7,12 +7,13 @@ mod ray;
 mod screen;
 mod triangle;
 mod vectors;
+mod helper;
 
-use crate::camera::Camera;
+use crate::camera::{Camera, Projection};
 use crate::quaternion::from_axis_angle;
 use crate::screen::Screen;
 use crate::triangle::Triangle;
-use crate::vectors::{Normal, Vec3};
+use crate::vectors::{Normal, Vec2, Vec3};
 use crossterm::{
     cursor,
     event::{self, Event, KeyCode},
@@ -22,6 +23,16 @@ use crossterm::{
 use std::io::{stdout, Write};
 use std::path::Path;
 use std::time::Instant;
+
+/// Project and rasterize one view-space triangle. Only needed on the clipping
+/// path; the common case reads pre-projected vertices straight out of the cache.
+fn draw(a: Vec3, b: Vec3, c: Vec3, projection: &Projection, screen: &mut Screen) {
+    screen.draw_triangle(
+        projection.project(a),
+        projection.project(b),
+        projection.project(c),
+    );
+}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // let triangle = Triangle::new(
@@ -48,57 +59,104 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let rotate_speed = 0.1;
     let focal_speed = 0.05;
 
+    // Everything below is reused across frames so the hot loop never allocates.
+    let (mut term_width, mut term_height) = size()?;
+    // Double height since we use half-blocks (2 pixels per terminal line),
+    // leaving room for the controls line.
+    let mut screen = Screen::new(term_width as u32, ((term_height - 3) * 2) as u32);
+    let mut view_vertices: Vec<Vec3> = Vec::with_capacity(object.vertices.len());
+    let mut screen_vertices: Vec<(Vec2, f32)> = Vec::with_capacity(object.vertices.len());
+
+    // Exponential moving averages, because raw per-frame timings are unreadable.
+    // 0.05 gives a time constant of roughly 20 frames.
+    const SMOOTHING: f64 = 0.05;
+    let mut draw_avg: Option<f64> = None;
+    let mut render_avg: Option<f64> = None;
+    // Noise only ever makes a frame slower, so the fastest frame seen is the
+    // cleanest estimate of what the work actually costs.
+    let mut draw_min = f64::INFINITY;
+
     loop {
         // Move cursor to top-left
         execute!(stdout(), cursor::MoveTo(0, 0))?;
 
-        // Get terminal size and create screen
-        let (term_width, term_height) = size()?;
-        // Double height since we use half-blocks (2 pixels per terminal line)
-        let screen_height = ((term_height - 3) * 2) as u32; // Leave room for controls
-        let screen_width = term_width as u32;
-
-        let mut screen = Screen::new(screen_width, screen_height);
+        let (tw, th) = size()?;
+        if (tw, th) != (term_width, term_height) {
+            term_width = tw;
+            term_height = th;
+            screen = Screen::new(tw as u32, ((th - 3) * 2) as u32);
+        } else {
+            screen.clear();
+        }
+        let screen_height = screen.pixel_height;
 
         let rotation = from_axis_angle(Vec3::new(0.0, 1.0, 0.0), 0.02);
-        object.rotation = rotation * object.rotation;
+        object.rotation = (rotation * object.rotation).normalized();
 
         // Project vertices and draw triangle
         let draw_start = Instant::now();
-        // let p1 = camera.project(triangle.p1, &screen);
-        // let p2 = camera.project(triangle.p2, &screen);
-        // let p3 = camera.project(triangle.p3, &screen);
+
+        let basis = camera.basis();
+        let projection = camera.projection(&screen);
+        let z_near = camera.z_near;
+
+        // Each vertex is shared by about six faces, so transform and project
+        // once here rather than once per face that references it.
+        view_vertices.clear();
+        view_vertices.extend(
+            object
+                .vertices
+                .iter()
+                .map(|&v| camera.to_view_with(&basis, object.rotation.transform(v))),
+        );
+
+        screen_vertices.clear();
+        screen_vertices.extend(view_vertices.iter().map(|&v| projection.project(v)));
+
         for f in object.faces.iter() {
-            let v0 = object.rotation.transform(object.vertices[f[0]]);
-            let v1 = object.rotation.transform(object.vertices[f[1]]);
-            let v2 = object.rotation.transform(object.vertices[f[2]]);
+            let (a, b, c) = (view_vertices[f[0]], view_vertices[f[1]], view_vertices[f[2]]);
 
-            let view = Triangle::new(v0, v1, v2).map(|v| camera.to_view(v));
-
-            let clipped_triangles = view.clip_z(0.1);
-            for t in clipped_triangles {
-
-                let p1 = camera.project_view(t.p1, &screen);
-                let p2 = camera.project_view(t.p2, &screen);
-                let p3 = camera.project_view(t.p3, &screen);
-                screen.draw_triangle(p1, p2, p3);
+            if a.z >= z_near && b.z >= z_near && c.z >= z_near {
+                // Common case: nothing to clip, vertices already projected.
+                screen.draw_triangle(
+                    screen_vertices[f[0]],
+                    screen_vertices[f[1]],
+                    screen_vertices[f[2]],
+                );
+            } else if a.z < z_near && b.z < z_near && c.z < z_near {
+                continue;
+            } else {
+                for t in Triangle::new(a, b, c).clip_z(z_near) {
+                    draw(t.p1, t.p2, t.p3, &projection, &mut screen);
+                }
             }
         }
         let draw_time = draw_start.elapsed();
-
-        // screen.draw_triangle(p1, p2, p3);
 
         let render_start = Instant::now();
         screen.render()?;
         let render_time = render_start.elapsed();
 
         // Show controls and performance stats at bottom
+        fn smooth(avg: &mut Option<f64>, sample: f64) -> f64 {
+            let next = match *avg {
+                Some(a) => a + (sample - a) * SMOOTHING,
+                None => sample,
+            };
+            *avg = Some(next);
+            next
+        }
+        let draw_sample = draw_time.as_secs_f64() * 1000.0;
+        let draw_ms = smooth(&mut draw_avg, draw_sample);
+        let render_ms = smooth(&mut render_avg, render_time.as_secs_f64() * 1000.0);
+        draw_min = draw_min.min(draw_sample);
+
         execute!(stdout(), cursor::MoveTo(0, screen_height as u16 / 2 + 1))?;
         print!(
-            "Controls: W/A/S/D=Move | Q/E=Rotate | M/N=Focal | ESC=Exit | Draw: {:.2}ms | Render: {:.2}ms | Camera: pos={:?}, focal={:.2}",
-            draw_time.as_millis(),
-            render_time.as_millis(),
-            camera.position,
+            "W/A/S/D=Move | Q/E=Rotate | M/N=Focal | R=Reset min | ESC=Exit | Draw: {:6.2}ms (min {:6.2}) | Render: {:6.2}ms | focal={:.2}",
+            draw_ms,
+            draw_min,
+            render_ms,
             camera.focal_length
         );
         stdout().flush()?;
@@ -106,8 +164,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Poll for input (non-blocking) - use 0ms for max speed, or set to 16ms for ~60 FPS cap
         if event::poll(std::time::Duration::from_millis(16))? {
             if let Event::Key(key_event) = event::read()? {
-                let forward = *camera.forward();
-                let right = *camera.right();
+                let forward = *basis.forward;
+                let right = *basis.right;
 
                 match key_event.code {
                     KeyCode::Char('w') => {
@@ -125,18 +183,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     KeyCode::Char('q') => {
                         // Rotate left around Y axis
                         let rotation = from_axis_angle(Vec3::new(0.0, 1.0, 0.0), rotate_speed);
-                        camera.rotation = rotation * camera.rotation;
+                        camera.rotation = (rotation * camera.rotation).normalized();
                     }
                     KeyCode::Char('e') => {
                         // Rotate right around Y axis
                         let rotation = from_axis_angle(Vec3::new(0.0, 1.0, 0.0), -rotate_speed);
-                        camera.rotation = rotation * camera.rotation;
+                        camera.rotation = (rotation * camera.rotation).normalized();
                     }
                     KeyCode::Char('m') => {
                         camera.focal_length += focal_speed;
                     }
                     KeyCode::Char('n') => {
                         camera.focal_length = (camera.focal_length - focal_speed).max(0.01);
+                    }
+                    KeyCode::Char('r') => {
+                        draw_min = f64::INFINITY;
                     }
                     KeyCode::Esc => break,
                     _ => {}

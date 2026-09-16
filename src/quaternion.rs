@@ -28,12 +28,13 @@ impl Quaternion {
 
     pub fn inverse(&self) -> Quaternion {
         let norm_squared = self.w * self.w + self.x * self.x + self.y * self.y + self.z * self.z;
+        let inv = 1.0 / (norm_squared);
 
         Quaternion {
-            w: self.w / norm_squared,
-            x: -self.x / norm_squared,
-            y: -self.y / norm_squared,
-            z: -self.z / norm_squared,
+            w: self.w * inv,
+            x: -self.x * inv,
+            y: -self.y * inv,
+            z: -self.z * inv,
         }
     }
 
@@ -46,9 +47,24 @@ impl Quaternion {
         }
     }
 
+    /// Repeatedly multiplying quaternions accumulates f32 error. Call this once
+    /// per frame on anything being accumulated so `transform` stays exact.
+    pub fn normalized(&self) -> Quaternion {
+        let inv = 1.0
+            / (self.w * self.w + self.x * self.x + self.y * self.y + self.z * self.z).sqrt();
+        Quaternion {
+            w: self.w * inv,
+            x: self.x * inv,
+            y: self.y * inv,
+            z: self.z * inv,
+        }
+    }
+
+    /// Assumes a unit quaternion, where the inverse is just the conjugate.
+    /// Three negations instead of a division and four multiplies.
     pub fn transform(&self, v: Vec3) -> Vec3 {
         let p = Quaternion::new(0.0, v.x, v.y, v.z);
-        let t = ((*self) * p) * self.inverse();
+        let t = ((*self) * p) * self.conjugate();
         Vec3 {
             x: t.x,
             y: t.y,

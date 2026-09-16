@@ -29,7 +29,8 @@ impl Vec3 {
 
 impl Normalize for Vec3 {
     fn normalized(&self) -> Vec3 {
-        *self / self.length()
+        let inv = 1.0 / self.length();
+        *self * inv
     }
 }
 
