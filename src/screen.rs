@@ -60,26 +60,53 @@ impl Screen {
         (Vec2::new(x_min, y_min), Vec2::new(x_max, y_max))
     }
 
-    pub fn draw_triangle(&mut self, v0: Vec2, v1: Vec2, v2: Vec2) {
+    pub fn draw_triangle(&mut self, v0: (Vec2, f32), v1: (Vec2, f32), v2: (Vec2, f32)) {
+        fn depth_map(depth: f32) -> Pixel {
+            let depth = depth/5.0;
+            let depth = depth.clamp(0.0, 1.0);
+
+            let intensity = ((1.0 - depth) * 255.0 + depth * 0.0) as u8;
+            Pixel::new(intensity, intensity, intensity)
+        }
+
         fn edge_function(a: Vec2, b: Vec2, c: Vec2) -> f32 {
             (c.x - a.x) * (b.y - a.y) - (c.y - a.y) * (b.x - a.x)
         }
 
-        let bounds = self.triangle_bounds(v0, v1, v2);
+        let bounds = self.triangle_bounds(v0.0, v1.0, v2.0);
 
-        for y in (bounds.0.y.floor() as usize)..(bounds.1.y.ceil() as usize) {
-            for x in (bounds.0.x.floor() as usize)..(bounds.1.x.ceil() as usize) {
+        let w = self.pixel_width as f32;
+        let h = self.pixel_height as f32;
+
+        let x0 = bounds.0.x.floor().clamp(0.0, w) as usize;
+        let x1 = bounds.1.x.ceil().clamp(0.0, w) as usize;
+        let y0 = bounds.0.y.floor().clamp(0.0, h) as usize;
+        let y1 = bounds.1.y.ceil().clamp(0.0, h) as usize;
+
+        // 1/z is linear in screen space, z is not. Interpolate the
+        // reciprocals and flip back per pixel.
+        let iz0 = 1.0 / v0.1;
+        let iz1 = 1.0 / v1.1;
+        let iz2 = 1.0 / v2.1;
+
+        for y in y0..y1 {
+            for x in x0..x1 {
                 let p = Vec2::new(x as f32 + 0.5, y as f32 + 0.5);
 
-                let w0 = edge_function(v0, v1, p);
-                let w1 = edge_function(v1, v2, p);
-                let w2 = edge_function(v2, v0, p);
+                let w0 = edge_function(v0.0, v1.0, p);
+                let w1 = edge_function(v1.0, v2.0, p);
+                let w2 = edge_function(v2.0, v0.0, p);
 
                 let inside =
                     (w0 >= 0.0 && w1 >= 0.0 && w2 >= 0.0) || (w0 <= 0.0 && w1 <= 0.0 && w2 <= 0.0);
 
                 if inside {
-                    self.draw_pixel(Vec2::new(x as f32, y as f32), Pixel::white());
+                    let depth = (w0 + w1 + w2) / (w0 * iz2 + w1 * iz0 + w2 * iz1);
+                    let color = depth_map(depth);
+                    let idx = y * w as usize + x;
+                    if self.pixels[idx].r < color.r {
+                        self.draw_pixel(Vec2::new(x as f32, y as f32), color);
+                    }
                 }
             }
         }

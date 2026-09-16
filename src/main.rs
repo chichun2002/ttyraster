@@ -11,6 +11,7 @@ mod vectors;
 use crate::camera::Camera;
 use crate::quaternion::from_axis_angle;
 use crate::screen::Screen;
+use crate::triangle::Triangle;
 use crate::vectors::{Normal, Vec3};
 use crossterm::{
     cursor,
@@ -72,10 +73,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let v1 = object.rotation.transform(object.vertices[f[1]]);
             let v2 = object.rotation.transform(object.vertices[f[2]]);
 
-            let p1 = camera.project(v0, &screen);
-            let p2 = camera.project(v1, &screen);
-            let p3 = camera.project(v2, &screen);
-            screen.draw_triangle(p1, p2, p3);
+            let view = Triangle::new(v0, v1, v2).map(|v| camera.to_view(v));
+
+            let clipped_triangles = view.clip_z(0.1);
+            for t in clipped_triangles {
+
+                let p1 = camera.project_view(t.p1, &screen);
+                let p2 = camera.project_view(t.p2, &screen);
+                let p3 = camera.project_view(t.p3, &screen);
+                screen.draw_triangle(p1, p2, p3);
+            }
         }
         let draw_time = draw_start.elapsed();
 
@@ -97,7 +104,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         stdout().flush()?;
 
         // Poll for input (non-blocking) - use 0ms for max speed, or set to 16ms for ~60 FPS cap
-        if event::poll(std::time::Duration::from_millis(0))? {
+        if event::poll(std::time::Duration::from_millis(16))? {
             if let Event::Key(key_event) = event::read()? {
                 let forward = *camera.forward();
                 let right = *camera.right();

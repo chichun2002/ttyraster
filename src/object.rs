@@ -41,20 +41,28 @@ impl ModelLoader for ObjLoader {
                     ));
                 }
                 ["f", v1, v2, v3, ..] => {
-                    fn parse_vertex(s: &str) -> Result<usize> {
+                    fn parse_vertex(s: &str, vertex_count: usize) -> Result<usize> {
                         let vertex_str = s.split('/').next().context("Empty vertex reference")?;
-                        let idx: usize = vertex_str.parse().context("Invalid vertex index")?;
-                        Ok(idx - 1)
+                        let idx: isize = vertex_str.parse().context("Invalid vertex index")?;
+
+                        // Handle negative indices (relative to current position)
+                        let absolute_idx = if idx < 0 {
+                            (vertex_count as isize + idx) as usize
+                        } else {
+                            (idx - 1) as usize // OBJ indices are 1-based
+                        };
+
+                        Ok(absolute_idx)
                     }
-                    let idx1 = parse_vertex(v1)?;
-                    let idx2 = parse_vertex(v2)?;
-                    let idx3 = parse_vertex(v3)?;
+                    let idx1 = parse_vertex(v1, vertices.len())?;
+                    let idx2 = parse_vertex(v2, vertices.len())?;
+                    let idx3 = parse_vertex(v3, vertices.len())?;
 
                     faces.push([idx1, idx2, idx3]);
 
                     for i in 3..parts.len() - 1 {
-                        let idx_next = parse_vertex(parts[i + 1])?;
-                        faces.push([idx1, parse_vertex(parts[i])?, idx_next]);
+                        let idx_next = parse_vertex(parts[i + 1], vertices.len())?;
+                        faces.push([idx1, parse_vertex(parts[i], vertices.len())?, idx_next]);
                     }
                 }
                 _ => {}

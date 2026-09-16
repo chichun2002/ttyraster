@@ -41,17 +41,22 @@ impl Camera {
     pub fn right(&self) -> Normal<Vec3> {
         Normal::new(self.rotation.transform(Vec3::new(1.0, 0.0, 0.0)))
     }
-    pub fn project(&self, vertex: Vec3, screen: &Screen) -> Vec2 {
-        let vertex = vertex - self.position;
-        let x = vertex.dot(*self.right()) / vertex.dot(*self.forward()) * self.focal_length;
-        let y = vertex.dot(*self.up()) / vertex.dot(*self.forward()) * self.focal_length;
+    
+    pub fn to_view(&self, vertex: Vec3) -> Vec3 {
+        let v = vertex - self.position;
+        Vec3::new(v.dot(*self.right()), v.dot(*self.up()), v.dot(*self.forward()))
+    }
 
-        let aspect_ratio = screen.pixel_width as f32 / screen.pixel_height as f32;
-        let height = self.width / aspect_ratio;
+    pub fn project_view(&self, v: Vec3, screen: &Screen) -> (Vec2, f32) {
+        let x = v.x / v.z * self.focal_length;
+        let y = v.y / v.z * self.focal_length;
 
-        let pixel_x = (x / self.width + 0.5) * screen.pixel_width as f32;
-        let pixel_y = (0.5 - y / height) * screen.pixel_height as f32;
+        let aspect = screen.pixel_width as f32 / screen.pixel_height as f32;
+        let height = self.width / aspect;
 
-        Vec2::new(pixel_x, pixel_y)
+        let px = (x / self.width + 0.5) * screen.pixel_width as f32;
+        let py = (0.5 - y / height) * screen.pixel_height as f32;
+
+        (Vec2::new(px, py), v.z)
     }
 }
