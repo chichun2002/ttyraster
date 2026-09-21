@@ -41,11 +41,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     //     Vec3::new(3.0, 5.2, 0.0),
     // );
     let mut object = object::load_model(Path::new(
-        "/home/tristan/Documents/software_rasterizer/models/bunny.obj",
+        "/home/tristan/Documents/software_rasterizer/models/dragon.obj",
     ))?;
 
     let mut camera = Camera::new(
-        Vec3::new(0.0, 1.0, 5.0),
+        Vec3::new(0.0, 0.0, 2.0),
         Normal::new(Vec3::new(0.0, 0.0, -1.0)),
         1.0,
         1.0,
@@ -131,6 +131,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
+
+        screen.pixel_transform();
+
         let draw_time = draw_start.elapsed();
 
         let render_start = Instant::now();

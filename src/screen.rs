@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use crate::vectors::Vec2;
+use crate::{helper, vectors::Vec2};
 
 #[derive(Debug, Clone, Copy)]
 pub struct Pixel {
@@ -30,6 +30,7 @@ pub struct Screen {
     pub pixel_width: u32,
     pub pixel_height: u32,
     pub pixels: Box<[Pixel]>,
+    pub depth: Box<[f32]>,
 }
 
 impl Screen {
@@ -38,13 +39,13 @@ impl Screen {
             pixel_width,
             pixel_height,
             pixels: vec![Pixel::black(); (pixel_width * pixel_height) as usize].into_boxed_slice(),
+            depth: vec![f32::MAX; (pixel_width * pixel_height) as usize].into_boxed_slice(),
         }
     }
 
     pub fn clear(&mut self) {
-        for pixel in self.pixels.iter_mut() {
-            *pixel = Pixel::black();
-        }
+        self.pixels.fill(Pixel::black());
+        self.depth.fill(f32::MAX);
     }
 
     pub fn triangle_bounds(&mut self, v0: Vec2, v1: Vec2, v2: Vec2) -> (Vec2, Vec2) {
@@ -61,13 +62,6 @@ impl Screen {
     }
 
     pub fn draw_triangle(&mut self, v0: (Vec2, f32), v1: (Vec2, f32), v2: (Vec2, f32)) {
-        fn depth_map(depth: f32) -> Pixel {
-            let depth = depth/5.0;
-            let depth = depth.clamp(0.0, 1.0);
-
-            let intensity = ((1.0 - depth) * 255.0 + depth * 0.0) as u8;
-            Pixel::new(intensity, intensity, intensity)
-        }
 
         fn edge_function(a: Vec2, b: Vec2, c: Vec2) -> f32 {
             (c.x - a.x) * (b.y - a.y) - (c.y - a.y) * (b.x - a.x)
@@ -102,11 +96,29 @@ impl Screen {
 
                 if inside {
                     let depth = (w0 + w1 + w2) / (w0 * iz2 + w1 * iz0 + w2 * iz1);
-                    let color = depth_map(depth);
                     let idx = y * w as usize + x;
-                    if self.pixels[idx].r < color.r {
-                        self.draw_pixel(Vec2::new(x as f32, y as f32), color);
+                    if depth < self.depth[idx] {
+                        self.depth[idx] = depth;
+                        // self.pixels[idx] = depth_map(depth)
                     }
+                }
+            }
+        }
+    }
+
+    pub fn pixel_transform(&mut self) {
+        fn depth_map(depth: f32, max_depth: f32, min_depth: f32) -> Pixel {
+            let intensity = helper::lerp(depth, min_depth, max_depth, 255.0, 0.0) as u8;
+            Pixel::new(intensity, intensity, intensity)
+        }
+
+        let max_depth = self.depth.iter().copied().filter(|&x| x != f32::MAX && !x.is_nan()).max_by(f32::total_cmp);
+        let min_depth = self.depth.iter().copied().filter(|&x| x != f32::MAX && !x.is_nan()).min_by(f32::total_cmp);
+
+        if let (Some(min), Some(max)) = (min_depth, max_depth) {
+            for (i, &depth) in self.depth.iter().enumerate() {
+                if depth != f32::MAX && !depth.is_nan() {
+                    self.pixels[i] = depth_map(depth, max, min);
                 }
             }
         }
