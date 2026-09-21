@@ -1,5 +1,5 @@
 [package]
-name = "software_rasterizer"
+name = "ttyraster"
 version = "0.1.0"
 edition = "2024"
 

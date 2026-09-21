@@ -1,4 +1,4 @@
-# software_rasterizer
+# ttyraster
 
 ![Stanford dragon rendered as a depth map in the terminal](assets/demo.gif)
 
